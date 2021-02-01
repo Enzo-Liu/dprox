@@ -9,6 +9,7 @@ import           Control.Concurrent        (forkIO)
 import           Control.Exception         (SomeException, handle)
 import           Control.Monad             (forM, forever, join)
 import           Data.ByteString           (ByteString)
+import           Data.ByteString.Char8           (unpack)
 import qualified Data.Foldable             as F
 import qualified Data.Map                  as M
 import           Data.Maybe                (fromMaybe)
@@ -21,6 +22,8 @@ import           System.Posix.User         (UserEntry (..), getUserEntryForName,
 
 import           Config
 import           DomainRoute
+import Text.Read
+
 
 type Resolver = DNS.Domain -> DNS.TYPE -> IO (Either DNS.DNSError [DNS.RData])
 
@@ -88,6 +91,16 @@ handleAddressAndHosts address hosts resolver qd qt =
     userDefined | qt == DNS.A    = ipv4
                 | qt == DNS.AAAA = ipv6
                 | otherwise      = []
+handleIp :: Resolver -> Resolver
+handleIp r domain qt = do
+  let toDot '-' = '.'
+      toDot c = c
+      ipstr = unpack domain
+      ip = map toDot . dropWhile (/= '1') . takeWhile (/= '.') $ ipstr
+  print ipstr
+  case readEither ip of
+    Left _ -> r domain qt
+    Right ip1 -> return $ Right [DNS.RD_A ip1]
 
 handleBogusNX :: S.Set IP -> Resolver -> Resolver
 handleBogusNX blacklist resolver qd qt =
@@ -149,7 +162,7 @@ main = do
         createResolvers ((k,v):xs) m = DNS.withResolver v $ \rs ->
             createResolvers xs (M.insert k (DNS.lookup rs) m)
         createResolvers [] m = let serverRoute' = fmap (`M.lookup`m) serverRoute
-                                   resolver = handleBogusNX bogusnxSet $
+                                   resolver = handleIp $ handleBogusNX bogusnxSet $
                                               handleAddressAndHosts addressRoute hostsRoute $
                                               handleServer serverRoute'
                                in processWithResolver resolver
